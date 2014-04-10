@@ -72,6 +72,8 @@ unsigned long const dsMeassureInterval=750; //inteval between meassurements
 unsigned long lastMeasTime=0;
 float sensor[NUMBER_OF_DEVICES];
 
+float phPa; // pressure in kPa
+#define pressurePin A1
 
 #include "DHT.h"
 #define DHTTYPE DHT11   // DHT 11 
@@ -145,7 +147,14 @@ void loop() {
 		Serial.println(dht.readHumidity());
 		
 		Serial.print("MPX4115A:");
-		Serial.println(analogRead(1));
+		int val = analogRead(pressurePin);
+		phPa = ((float)val/(float)1023+0.095)/0.0009;
+		//pAtm = kpa2atm*pkPa;
+		/* send pressure to serial port */
+		Serial.print(phPa);
+		Serial.println("hPa ");
+		//Serial.print(pAtm);
+		//Serial.println("Atm ");
 	}
 
 

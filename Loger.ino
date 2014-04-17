@@ -1,10 +1,10 @@
 /*PINOUT
 
 D0 Rx
-D1 GPS
+D1 
 D2 
-D3 
-D4 
+D3 GPS
+D4 GPS
 D5-D8
 D9 
 D10-D13 SD card 
@@ -30,21 +30,22 @@ A5
 
  */ 
 
-#include <string.h>
-#include <ctype.h>
+//#include <string.h>
+//#include <ctype.h>
+#ifdef SD
 #include <SD.h>
+#endif
 
-int ledPin = 13;                  // LED test pin
-int rxPin = 0;                    // RX PIN 
-int txPin = 1;                    // TX TX
-int byteGPS=-1;
-char linea[300] = "";
-char comandoGPR[7] = "$GPRMC";
-int cont=0;
-int bien=0;
-int conta=0;
-int indices[13];
-File dataFile;
+#include "TinyGPS++.h"
+#include <SoftwareSerial.h>
+static const int RXPin = 4, TXPin = 3;
+static const uint32_t GPSBaud = 4800;
+
+// The TinyGPS++ object
+TinyGPSPlus gps;
+
+// The serial connection to the GPS device
+SoftwareSerial ss(RXPin, TXPin);
 
 const int chipSelect = 10;
 
@@ -61,7 +62,7 @@ DallasTemperature dsSensors(&onewire);
 #endif
 DeviceAddress tempDeviceAddress;
 #ifndef NUMBER_OF_DEVICES
-#define NUMBER_OF_DEVICES 4
+#define NUMBER_OF_DEVICES 1
 #endif
 DeviceAddress tempDeviceAddresses[NUMBER_OF_DEVICES];
 //int  resolution = 12;
@@ -87,18 +88,32 @@ DHT dht(DHTPIN, DHTTYPE);
 unsigned long lastDHTMeasTime;
 unsigned long lastDisplayDHTTime;
 
+unsigned long saveMeteoDataInterval = 1000;
+unsigned long lastSaveMeteoData = 0;
+
+#ifdef SD
+File dFile;
+#define delimiter ';'
+#endif
+
+#include <IIC_without_ACK.h>
+#include "oledfont.c"   //codetab
+
+#define OLED_SDA 8
+#define OLED_SCL 9
+
+IIC_without_ACK lucky(OLED_SDA, OLED_SCL);//8 -- sda,9 -- scl
+
+char c[7];
+
+
 void setup() {
-	pinMode(ledPin, OUTPUT);       // Initialize LED pin
-	pinMode(rxPin, INPUT);
-	pinMode(txPin, OUTPUT);
-	Serial.begin(4800);
-	for (int i=0;i<300;i++){       // Initialize a buffer for received data
-	 linea[i]=' ';
-	}  
+	Serial.begin(115200);
+  ss.begin(GPSBaud);
 	Serial.println("DataLoger");
 	Serial.print("Initializing SD card...");
 
- 
+#ifdef SD
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
     Serial.println("Card failed, or not present");
@@ -106,12 +121,17 @@ void setup() {
     return;
   }
   Serial.println("card initialized.");
-	dataFile = SD.open("datalog.txt", FILE_WRITE);
-	
+	dFile = SD.open("datalog.txt", FILE_WRITE);
+#endif
+  
 	dsInit();
 	
   dhtInit();
   dht.startMeas();
+  
+  lucky.Initial();
+  delay(10);
+  lucky.Fill_Screen(0x00);
 }
 
 void loop() {
@@ -135,7 +155,6 @@ void loop() {
           break;
         }
       }
-
       sensor[i] = tempTemp;
     } 
 		Serial.print("Teplota DS18B20:");
@@ -155,95 +174,74 @@ void loop() {
 		Serial.println("hPa ");
 		//Serial.print(pAtm);
 		//Serial.println("Atm ");
+    int t = (int)(sensor[0]*10);
+    sprintf(c,"%d.%u",t/10,abs(t%10));
+    lucky.Char_F6x8(0,0,c);
+    t=dht.readTemperature();
+    sprintf(c,"%d",t);
+    lucky.Char_F6x8(40,0,c);
+    t=dht.readHumidity();
+    sprintf(c,"%d",t);
+    lucky.Char_F6x8(80,0,c);
+    
 	}
+  if (millis() - lastSaveMeteoData > saveMeteoDataInterval) {
+    lastSaveMeteoData = millis();
+#ifdef SD
+    saveMeteoData();
+#endif
+  }
+  
+  /*printInt(gps.satellites.value(), gps.satellites.isValid(), 5);
+  printInt(gps.hdop.value(), gps.hdop.isValid(), 5);
+  printFloat(gps.location.lat(), gps.location.isValid(), 11, 6);*/
+  itoa(gps.location.lat(),c,10);
+  lucky.Char_F6x8(0,4,c);
+  
+	//readGPSData();
 
-
- digitalWrite(ledPin, HIGH);
- byteGPS=Serial.read();         // Read a byte of the serial port
- if (byteGPS == -1) {           // See if the port is empty yet
-	 delay(100); 
- } else {
-	 // note: there is a potential buffer overflow here!
-	 linea[conta]=byteGPS;        // If there is serial port data, it is put in the buffer
-	 conta++;                      
-	 Serial.print((char)byteGPS); 
-	 if (byteGPS==13){            // If the received byte is = to 13, end of transmission
-		writeGPS();
-		 // note: the actual end of transmission is <CR><LF> (i.e. 0x13 0x10)
-		 digitalWrite(ledPin, LOW); 
-		 cont=0;
-		 bien=0;
-		 // The following for loop starts at 1, because this code is clowny and the first byte is the <LF> (0x10) from the previous transmission.
-		 for (int i=1;i<7;i++){     // Verifies if the received command starts with $GPR
-			 if (linea[i]==comandoGPR[i-1]){
-				 bien++;
-			 }
-		 }
-		 if(bien==6){               // If yes, continue and process the data
-			 for (int i=0;i<300;i++){
-				 if (linea[i]==','){    // check for the position of the  "," separator
-					 // note: again, there is a potential buffer overflow here!
-					 indices[cont]=i;
-					 cont++;
-				 }
-				 if (linea[i]=='*'){    // ... and the "*"
-					 indices[12]=i;
-					 cont++;
-				 }
-			 }
-			 Serial.println("");      // ... and write to the serial port
-			 Serial.println("");
-			 Serial.println("---------------");
-			 for (int i=0;i<12;i++){
-				 switch(i){
-					 case 0 :Serial.print("Time in UTC (HhMmSs): ");break;
-					 case 1 :Serial.print("Status (A=OK,V=KO): ");break;
-					 case 2 :Serial.print("Latitude: ");break;
-					 case 3 :Serial.print("Direction (N/S): ");break;
-					 case 4 :Serial.print("Longitude: ");break;
-					 case 5 :Serial.print("Direction (E/W): ");break;
-					 case 6 :Serial.print("Velocity in knots: ");break;
-					 case 7 :Serial.print("Heading in degrees: ");break;
-					 case 8 :Serial.print("Date UTC (DdMmAa): ");break;
-					 case 9 :Serial.print("Magnetic degrees: ");break;
-					 case 10 :Serial.print("(E/W): ");break;
-					 case 11 :Serial.print("Mode: ");break;
-					 case 12 :Serial.print("Checksum: ");break;
-				 }
-				 for (int j=indices[i];j<(indices[i+1]-1);j++){
-					 Serial.print(linea[j+1]); 
-				 }
-				 Serial.println("");
-			 }
-			 Serial.println("---------------");
-		 }
-		 conta=0;                    // Reset the buffer
-		 for (int i=0;i<300;i++){    //  
-			 linea[i]=' ';             
-		 }                 
-	 }
- }
+  
 }
 
+#ifdef SD
+void saveMeteoData() {
+  dFile.close();
+  //save meteo data
+	File dMeteo = SD.open("meteo.csv", FILE_WRITE);
+  if (dMeteo) {
+    dMeteo.print(sensor[0]);
+    dMeteo.print(delimiter);
+    dMeteo.print(dht.readTemperature());
+    dMeteo.print(delimiter);
+    dMeteo.print(dht.readHumidity());
+    dMeteo.print(delimiter);
+    dMeteo.print(phPa);
+    dMeteo.print(delimiter);
+    dMeteo.println();
+    dMeteo.close();
+  }
+	dFile = SD.open("datalog.txt", FILE_WRITE);
+}
+#endif
+
+void readGPSData() {
+}
+
+
+#ifdef SD
 void writeGPS() {
 	// open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
 
   // if the file is available, write to it:
-  if (dataFile) {
-		for (int i=0;i<300;i++){
-			dataFile.print(linea[i]);
-			if (linea[i]=='*'){    // ... and the "*"
-				dataFile.println("");
-				break;
-			}
-		}
+  if (dFile) {
   }  
   // if the file isn't open, pop up an error:
   else {
     Serial.println("error opening datalog.txt");
   } 
 }
+#endif
 
 void dsInit(void) {
   dsSensors.begin();
@@ -285,3 +283,87 @@ void dhtInit() {
   //Serial.print(DHTPIN);
   //Serial.println(" OK");
 }
+
+/*
+// This custom version of delay() ensures that the gps object
+// is being "fed".
+static void smartDelay(unsigned long ms)
+{
+  unsigned long start = millis();
+  do 
+  {
+    while (ss.available())
+      gps.encode(ss.read());
+  } while (millis() - start < ms);
+}
+
+static void printFloat(float val, bool valid, int len, int prec)
+{
+  if (!valid)
+  {
+    while (len-- > 1)
+      Serial.print('*');
+    Serial.print(' ');
+  }
+  else
+  {
+    Serial.print(val, prec);
+    int vi = abs((int)val);
+    int flen = prec + (val < 0.0 ? 2 : 1); // . and -
+    flen += vi >= 1000 ? 4 : vi >= 100 ? 3 : vi >= 10 ? 2 : 1;
+    for (int i=flen; i<len; ++i)
+      Serial.print(' ');
+  }
+  smartDelay(0);
+}
+
+static void printInt(unsigned long val, bool valid, int len)
+{
+  char sz[32] = "*****************";
+  if (valid)
+    sprintf(sz, "%ld", val);
+  sz[len] = 0;
+  for (int i=strlen(sz); i<len; ++i)
+    sz[i] = ' ';
+  if (len > 0) 
+    sz[len-1] = ' ';
+  Serial.print(sz);
+  smartDelay(0);
+}
+
+static void printDateTime(TinyGPSDate &d, TinyGPSTime &t)
+{
+  if (!d.isValid())
+  {
+    Serial.print(F("********** "));
+  }
+  else
+  {
+    char sz[32];
+    sprintf(sz, "%02d/%02d/%02d ", d.month(), d.day(), d.year());
+    Serial.print(sz);
+  }
+  
+  if (!t.isValid())
+  {
+    Serial.print(F("******** "));
+  }
+  else
+  {
+    char sz[32];
+    sprintf(sz, "%02d:%02d:%02d ", t.hour(), t.minute(), t.second());
+    Serial.print(sz);
+  }
+
+  printInt(d.age(), d.isValid(), 5);
+  smartDelay(0);
+}
+
+static void printStr(const char *str, int len)
+{
+  int slen = strlen(str);
+  for (int i=0; i<len; ++i)
+    Serial.print(i<slen ? str[i] : ' ');
+  smartDelay(0);
+}
+*/

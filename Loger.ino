@@ -94,7 +94,7 @@ void setup() {
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
     //Serial.println(F("Card failed, or not present"));
-    // don't do anything more:
+    //don't do anything more:
   }
   //Serial.println("card initialized.");
 	dFile = SD.open("datalog.txt", FILE_WRITE);
@@ -179,9 +179,31 @@ void loop() {
   //printFloat(gps.location.lat(), gps.location.isValid(), 11, 6);
   //printFloat(gps.location.lng(), gps.location.isValid(), 12, 6);
 
-
+  if (millis() - lastSaveMeteoData > saveMeteoDataInterval) {
+    lastSaveMeteoData = millis();
+    saveMeteoData();
+  }
   
   smartDelay(1000);
+}
+
+void saveMeteoData() {
+  dFile.close();
+  //save meteo data
+	File dMeteo = SD.open("meteo.csv", FILE_WRITE);
+  if (dMeteo) {
+    dMeteo.print(temperature);
+    dMeteo.print(delimiter);
+    dMeteo.print(dht.readTemperature());
+    dMeteo.print(delimiter);
+    dMeteo.print(dht.readHumidity());
+    dMeteo.print(delimiter);
+    dMeteo.print(hPa);
+    dMeteo.print(delimiter);
+    dMeteo.println();
+    dMeteo.close();
+  }
+	dFile = SD.open("datalog.txt", FILE_WRITE);
 }
 
 void dsInit(void) {

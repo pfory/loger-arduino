@@ -61,10 +61,10 @@ DeviceAddress tempDeviceAddresses[1];
 float temperature;
 
 //SD
-/* #include <SD.h>
+#include <SD.h>
 const int chipSelect = 10;
 File dFile;
-#define delimiter ';' */
+#define delimiter ';'
 
 //VAR
 char sz[32];
@@ -91,13 +91,13 @@ void setup() {
   
   dsInit();
   
-/*   // see if the card is present and can be initialized:
+  // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
     //Serial.println(F("Card failed, or not present"));
     // don't do anything more:
   }
   //Serial.println("card initialized.");
-	dFile = SD.open("datalog.txt", FILE_WRITE); */
+	dFile = SD.open("datalog.txt", FILE_WRITE);
 }
 
 void loop() {
